@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quiz App</title>
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --ink: #e2e8f0; --muted: #94a3b8;
+    --accent: #38bdf8; --good: #4ade80; --bad: #f87171; --line: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; justify-content: center; padding: 24px;
+  }
+  main { width: 100%; max-width: 620px; }
+  h1 { font-size: 1.6rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin-top: 16px;
+  }
+  .muted { color: var(--muted); font-size: .9rem; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  select, button, input {
+    font: inherit; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #082f49; font-weight: 600; border-color: var(--accent); }
+  button.option { width: 100%; text-align: left; margin-top: 8px; }
+  button.option:hover { border-color: var(--accent); }
+  button.option.good { border-color: var(--good); color: var(--good); }
+  button.option.bad { border-color: var(--bad); color: var(--bad); }
+  button.option:disabled { cursor: default; opacity: .85; }
+  .progress { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin-top: 12px; }
+  .progress > div { height: 100%; background: var(--accent); transition: width .25s; }
+  .answer { margin-top: 12px; font-size: .95rem; }
+  .score { display: inline-block; margin-left: auto; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Quiz App</h1>
+
+  <section id="setup" class="card">
+    <p class="muted">Zero-dependency timed quiz. Pick a category, answer the questions.</p>
+    <div class="row">
+      <label>Category
+        <select id="category">
+          <option value="_all">All categories</option>
+        </select>
+      </label>
+      <label>Questions
+        <select id="count">
+          <option value="">All</option>
+          <option value="5">5</option>
+          <option value="10">10</option>
+          <option value="15">15</option>
+        </select>
+      </label>
+      <button id="start" class="primary">Start</button>
+    </div>
+    <p id="setupError" class="muted" style="color:var(--bad)"></p>
+  </section>
+
+  <section id="quiz" class="card" style="display:none">
+    <div class="row">
+      <span id="qmeta" class="muted"></span>
+      <span id="score" class="score"></span>
+    </div>
+    <p id="question" style="font-weight:600; margin-top:10px"></p>
+    <div id="options"></div>
+    <div class="progress"><div id="bar"></div></div>
+    <div id="feedback" class="answer"></div>
+    <div class="row" style="margin-top:16px">
+      <button id="next" class="primary" style="display:none">Next</button>
+      <button id="quit" style="margin-left:auto">Quit</button>
+    </div>
+  </section>
+
+  <section id="result" class="card" style="display:none">
+    <h2 id="resultTitle">Done</h2>
+    <p id="resultStats" class="muted"></p>
+    <div class="row">
+      <button id="again" class="primary">Play again</button>
+      <button id="home" style="margin-left:auto">Back to setup</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let questions = [];
+let index = 0;
+let correct = 0;
+
+async function loadCategories() {
+  try {
+    const res = await fetch('/api/categories');
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'load failed');
+    const sel = $('category');
+    data.categories.forEach((c) => {
+      const o = document.createElement('option');
+      o.value = c.name;
+      o.textContent = `${c.name} (${c.count})`;
+      sel.appendChild(o);
+    });
+  } catch (err) {
+    $('setupError').textContent = 'Could not load categories: ' + err.message;
+  }
+}
+
+function showSetup() {
+  $('setup').style.display = 'block';
+  $('quiz').style.display = 'none';
+  $('result').style.display = 'none';
+}
+
+function renderQuestion() {
+  const q = questions[index];
+  $('qmeta').textContent = `Question ${index + 1}/${questions.length}`;
+  $('score').textContent = `Score: ${correct}`;
+  $('question').textContent = q.question;
+  const opts = $('options');
+  opts.innerHTML = '';
+  q.options.forEach((opt, i) => {
+    const b = document.createElement('button');
+    b.className = 'option';
+    b.textContent = `${String.fromCharCode(65 + i)}) ${opt}`;
+    b.addEventListener('click', () => choose(i, b));
+    opts.appendChild(b);
+  });
+  $('feedback').innerHTML = '';
+  $('next').style.display = 'none';
+  $('bar').style.width = `${(index / questions.length) * 100}%`;
+}
+
+function choose(i, btn) {
+  const q = questions[index];
+  const correctIdx = q.answer;
+  const buttons = [...$('options').children];
+  buttons.forEach((b, j) => {
+    b.disabled = true;
+    if (j === correctIdx) b.classList.add('good');
+  });
+  if (i !== correctIdx) btn.classList.add('bad');
+  else correct += 1;
+  const was = i === correctIdx;
+  $('feedback').innerHTML =
+    `<p>${was ? 'Correct!' : `Wrong. Correct answer: ${String.fromCharCode(65 + correctIdx)}) ${q.options[correctIdx]}`}</p>` +
+    `<p class="muted">${q.explanation}</p>`;
+  $('next').style.display = 'inline-block';
+}
+
+function showResult() {
+  $('quiz').style.display = 'none';
+  $('result').style.display = 'block';
+  const pct = Math.round((correct / questions.length) * 100);
+  $('resultTitle').textContent = pct === 100 ? 'Perfect!' : pct >= 60 ? 'Nice work' : 'Keep practicing';
+  $('resultStats').textContent = `You answered ${correct}/${questions.length} correctly (${pct}%).`;
+}
+
+$('start').addEventListener('click', async () => {
+  const category = $('category').value;
+  const limit = $('count').value;
+  const qs = limit ? `?category=${encodeURIComponent(category)}&limit=${limit}` : `?category=${encodeURIComponent(category)}`;
+  $('setupError').textContent = '';
+  try {
+    const res = await fetch('/api/questions' + qs);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'load failed');
+    questions = data.questions;
+    if (questions.length === 0) throw new Error('No questions');
+    index = 0;
+    correct = 0;
+    $('setup').style.display = 'none';
+    $('quiz').style.display = 'block';
+    renderQuestion();
+  } catch (err) {
+    $('setupError').textContent = 'Could not start quiz: ' + err.message;
+  }
+});
+
+$('next').addEventListener('click', () => {
+  index += 1;
+  if (index >= questions.length) showResult();
+  else renderQuestion();
+});
+
+$('quit').addEventListener('click', showResult);
+$('again').addEventListener('click', () => {
+  $('result').style.display = 'none';
+  $('quiz').style.display = 'block';
+  index = 0;
+  correct = 0;
+  renderQuestion();
+});
+$('home').addEventListener('click', showSetup);
+
+loadCategories();
+</script>
+</body>
+</html>
